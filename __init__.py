@@ -44,31 +44,43 @@ from bpy.utils import resource_path
 from pathlib import Path
 
 import random
-import math
 
 
-def calculate_luciferin_log_growth(x):
+def calculate_luciferin_func(x):
     """
-    Returns the value of x in an approximate kinetic curve for luciferin logarithmic growth, where x is a value between
-    0 and 1 (representing the proportion of the time between the start and end of the decay).
+    Approximates light emitted by luciferin-luciferase reaction as a fourth-order polynomial. Maximum ~0.25
 
-    :param x: A value between 0 and 1 representing the proportion of time elapsed between the start and end of the decay
+    :param x: A value between 0 and 1 representing the proportion of time elapsed between the start and end of luciferin
+    kinetics
 
     :returns: The relative intensity of the luciferin at x
     """
-    return 0.3318 * math.log(x) + 0.67
+    return -7.3377 * (x ** 4) + 20.926 * (x ** 3) - 20.226 * (x ** 2) + 6.97 * x - 0.3261
 
 
-def calculate_luciferin_exp_decay(x):
+def calculate_max(func, res=50):
     """
-    Returns the value of x in an approximate kinetic curve for luciferin exponential decay, where x is a value between
-    0 and 1 (representing the proportion of the time between the start and end of the decay).
+    Calculates the maximum value of a function with domain (0,1)
 
-    :param x: A value between 0 and 1 representing the proportion of time elapsed between the start and end of the decay
+    :param func: Function with domain (0,1) to calculate maximum for
+    :param res: Number of times to call the function (increasing this will provide a more exact maximum)
 
-    :returns: The relative intensity of the luciferin at x
+    :returns: A tuple representing maximum x and f(x)
     """
-    return 0.7456 * x ** 2 - 1.2703 * x + 0.6688
+    domain = list()
+    r = range(1,res)
+    for i in r:
+        domain.append(i/res)
+
+    max_val = func(domain[0])
+    max_domain = domain[0]
+    for d in domain:
+        result = func(d)
+        if result > max_val:
+            max_val = result
+            max_domain = d
+
+    return max_domain, max_val
 
 
 def set_up_scene():
@@ -203,6 +215,23 @@ class BlobGeneratorOperator(bpy.types.Operator):
         else:
             blob.set_highest_intensity_frame(context.scene.blob_highest_intensity_frame)
             blob.set_peak_intensity_value(context.scene.blob_highest_intensity)
+
+        poly = [context.scene.power_0, context.scene.power_1, context.scene.power_2, context.scene.power_3, context.scene.power_4]
+
+        empty_num = 0
+        for term in range(len(poly)):
+            if poly[term] == '':
+                poly[term] = 0.0
+                empty_num += 1
+            else:
+                try:
+                    poly[term] = float(poly[term])
+                except Exception as e:
+                    self.report({"ERROR", f"Could not convert terms into equation: {e}"})
+                    blob.delete_model()
+        if empty_num < len(poly):
+            blob.set_kinetic_function(poly)
+
         return {'FINISHED'}
 
 
@@ -242,8 +271,7 @@ class Blob:
                  min_intensity_blob=0.2,
                  max_intensity_blob=0.4,
 
-                 growth_func=calculate_luciferin_log_growth,
-                 decay_func=calculate_luciferin_exp_decay,
+                 kinetic_func=calculate_luciferin_func
                  ):
         """
         :param blob: Blender object representing a light-emitting Blob
@@ -278,13 +306,14 @@ class Blob:
         self.highest_intensity_frame = None
         self.peak_intensity_value = None
 
-        self.growth_func = growth_func
-        self.decay_func = decay_func
-        # To fit data to user submitted parameters, we will stretch the growth function we have developed.
-        self.growth_coeff = 1
-        self.decay_coeff = 1
+        self.kinetic_func = kinetic_func
+        # To fit data to user submitted parameters, the function will be stretched.
+        self.stretch_y = 1
+        self.shift = 0
+        self.stretch_x = 1
 
         # To make sure the blob is at least as bright as the mouse
+        # TODO Implement this
         self.parent_mouse_intensity = 0
 
     def get_name(self):
@@ -300,7 +329,7 @@ class Blob:
 
     def randomize_kinetics(self):
         """
-        Randomize the kinetics of this Blob.
+        Randomly shifts and scales the kinetic function for this blob.
 
         :return: This Blob object (for sequencing)
         """
@@ -310,17 +339,27 @@ class Blob:
 
         self.peak_intensity_value = random.uniform(self.min_intensity_blob, self.max_intensity_blob)
 
-        self.growth_coeff = self.peak_intensity_value / self.growth_func(1)
-        self.decay_coeff = self.peak_intensity_value / self.decay_func(1/(self.num_frames - self.highest_intensity_frame))
-
+        self.fit_kinetics()
         # For sequencing
         return self
 
+    def set_kinetic_function(self, coeff_list):
+        def k(x):
+            return sum([coeff_list[i] * (x ** i) for i in range(len(coeff_list))])
+
+        self.kinetic_func = k
+
+        self.fit_kinetics()
+
     def set_highest_intensity_frame(self, frame):
         self.highest_intensity_frame = frame
+        if self.peak_intensity_value is not None:
+            self.fit_kinetics()
 
     def set_peak_intensity_value(self, intensity):
         self.peak_intensity_value = intensity
+        if self.highest_intensity_frame is not None:
+            self.fit_kinetics()
 
     def get_blob(self):
         return self.blob
@@ -371,6 +410,14 @@ class Blob:
 
         return self
 
+    def fit_kinetics(self):
+        """
+        Sets coefficient and shift of kinetic function to match user submitted parameters
+        """
+        max_d, max_r = calculate_max(self.kinetic_func)
+        self.stretch_y = self.peak_intensity_value / max_r
+        self.shift = (self.highest_intensity_frame / self.num_frames) - max_d
+
     def interpolate(self, frame):
         """
         Sets this blob's intensity based on growth and decay functions
@@ -379,13 +426,15 @@ class Blob:
         :return: None, sets intensity of blob
         """
         self.light_emit_mesh_blob = self.blob.active_material.node_tree.nodes["Emission"].inputs[1]
-        if frame < self.highest_intensity_frame:
-            prop = frame+1 / self.highest_intensity_frame
-            intensity = self.growth_func(prop) * self.growth_coeff
+
+        x = frame/self.num_frames + self.shift
+        if x < 0 or self.kinetic_func(x) < 0:
+            intensity = self.parent_mouse_intensity
         else:
-            prop = (frame+1 - self.highest_intensity_frame) / (self.num_frames - self.highest_intensity_frame)
-            intensity = self.decay_func(prop) * self.decay_coeff
-        self.light_emit_mesh_blob.default_value = intensity + self.parent_mouse_intensity
+            intensity = self.kinetic_func(x) * self.stretch_y + self.parent_mouse_intensity
+
+        self.light_emit_mesh_blob.default_value = intensity
+
         return intensity
 
 
@@ -395,9 +444,9 @@ class Mouse:
                  light_source,
                  num_frames=100,
                  min_init_intensity_mouse=0.025,
-                 max_init_intensity_mouse=0.045,
-                 min_end_intensity_mouse=0.005,
-                 max_end_intensity_mouse=0.015,
+                 max_init_intensity_mouse=0.027,
+                 min_end_intensity_mouse=0.024,
+                 max_end_intensity_mouse=0.0025,
                  min_intensity_blob=0.2,
                  max_intensity_blob=0.4,
                  original_scaling_mouse=0.420,
@@ -606,10 +655,10 @@ class DataGen:
 
     def set_mouse(self,
 
-                  min_init_intensity_mouse=0.25,
-                  max_init_intensity_mouse=0.35,
-                  min_end_intensity_mouse=0.005,
-                  max_end_intensity_mouse=0.15,
+                  min_init_intensity_mouse=0.027,
+                  max_init_intensity_mouse=0.036,
+                  min_end_intensity_mouse=0.026,
+                  max_end_intensity_mouse=0.025,
                   original_scaling_mouse=0.420,
                   min_scaling_mouse=0.9,
                   max_scaling_mouse=1.1,
@@ -705,9 +754,17 @@ BLENDER_FILE_IMPORT_PATH = USER / "scripts/addons" / ADDON / "models" / BLENDER_
 BLENDER_FILE_IMPORT_PATH = str(BLENDER_FILE_IMPORT_PATH)
 
 ADD_BLOB_PROPS = [
-    ('label', "Blob Menu:"),
     # ('label', "Path to .usdc file containg light emitting blob. To use default model, leave blank."),
     # ('blob_model_path', bpy.props.StringProperty(name="Blob Path", default=BLOB_PATH)),
+    ('label', "Add Blob: "),
+    ('label', "Set blob kinetic function:"),
+    ('power_4', bpy.props.StringProperty(name="(x^4) * ", default='')),
+    ('power_3', bpy.props.StringProperty(name="+ (x^3) * ", default='')),
+    ('power_2', bpy.props.StringProperty(name="+ (x^2) * ", default='')),
+    ('power_1', bpy.props.StringProperty(name="+ (x^1) * ", default='')),
+    ('power_0', bpy.props.StringProperty(name="+ ", default='')),
+    ('label', "To use default kinetics, leave these fields blank"),
+    ('label', ''),
     ('randomize_blob_intensity', bpy.props.BoolProperty(name='Randomize Blob Intensity?', default=True)),
     ('blob_highest_intensity_frame', bpy.props.IntProperty(name='Peak Intensity Frame', default=30)),
     ('blob_highest_intensity', bpy.props.FloatProperty(name='Peak Intensity Val', default=0.3)),
