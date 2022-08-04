@@ -44,7 +44,30 @@ from pathlib import Path
 
 import random
 import math
-from scipy import interpolate
+
+
+def calculate_luciferin_log_growth(x):
+    """
+    Returns the value of x in an approximate kinetic curve for luciferin logarithmic growth, where x is a value between
+    0 and 1 (representing the proportion of the time between the start and end of the decay).
+
+    :param x: A value between 0 and 1 representing the proportion of time elapsed between the start and end of the decay
+
+    :returns: The relative intensity of the luciferin at x
+    """
+    return 0.3607 * math.log(x) - 0.1471
+
+
+def calculate_luciferin_exp_decay(x):
+    """
+    Returns the value of x in an approximate kinetic curve for luciferin exponential decay, where x is a value between
+    0 and 1 (representing the proportion of the time between the start and end of the decay).
+
+    :param x: A value between 0 and 1 representing the proportion of time elapsed between the start and end of the decay
+
+    :returns: The relative intensity of the luciferin at x
+    """
+    return 0.7456 * x ** 2 - 1.2703 * x + 0.6688
 
 
 def set_up_scene():
@@ -223,6 +246,9 @@ class Blob:
                  max_shift_blob_y=5.0,
                  min_intensity_blob=0.2,
                  max_intensity_blob=0.4,
+
+                 growth_func=calculate_luciferin_log_growth,
+                 decay_func=calculate_luciferin_exp_decay,
                  ):
         """
         :param blob: Blender object representing a light-emitting Blob
@@ -254,7 +280,11 @@ class Blob:
         self.max_intensity_blob = max_intensity_blob
         self.num_frames = num_frames
 
-        self.spline = None
+        self.highest_intensity_frame = None
+        self.peak_intensity_value = None
+
+        self.growth_func = growth_func
+        self.decay_func = decay_func
 
     def get_name(self):
         try:
@@ -263,71 +293,30 @@ class Blob:
         except ReferenceError:
             return False
 
-    def set_spline_by_frame(self, x, y):
-        """
-        Sets the spline based on a list of points. This function can be called manually to circumvent default points of spline.
-
-        :param x: List of points on the x-axis
-        :param y: Corresponding points on the y-axis
-        :return:
-        """
-        self.spline = interpolate.splrep(x, y, s=0)
-
     def delete_model(self):
         self.blob.select_set(True)
         bpy.ops.object.delete()
 
-    def set_spline_by_peak_intensity(self, highest_intensity_frame, peak_intensity_blob):
-        """
-        Sets spline based on peak intensity. This function can be called manually to circumvent random generation of the spline.
-
-        :param highest_intensity_frame: Number frame with highest intensity
-        :param peak_intensity_blob: Maximum intensity of the blob
-
-        :return: None, sets spline
-        """
-        x = [0,
-             highest_intensity_frame / 100,
-             highest_intensity_frame / 4,
-             highest_intensity_frame / 2,
-             highest_intensity_frame,
-             (3 / 2) * highest_intensity_frame,
-             (self.num_frames + highest_intensity_frame) / 2,
-             (3 / 4) * self.num_frames + highest_intensity_frame / 4,
-             self.num_frames - 1,
-             self.num_frames]
-
-        # y - values
-        y = [0.0,
-             0.0,
-             peak_intensity_blob / 5,
-             (4 / 5) * peak_intensity_blob,
-             peak_intensity_blob,
-             (7 / 10) * peak_intensity_blob,
-             (3 / 10) * peak_intensity_blob,
-             (1 / 10) * peak_intensity_blob,
-             0.0,
-             0.0]
-
-        self.set_spline_by_frame(x, y)
-
-    def randomize_spline(self):
+    def randomize_kinetics(self):
         """
         Randomize the shape of the spline curve for this Blob.
 
         :return: This Blob object (for sequencing)
         """
         # frame with highest light intensity blob -> randomized at around 0.3 * num_frames +/- 0.05 * num_frames
-        highest_intensity_frame = int(
+        self.highest_intensity_frame = int(
             (self.num_frames * 0.3) + (random.uniform(-1.0, 1.0) * 0.05 * self.num_frames))
 
-        peak_intensity_blob = random.uniform(self.min_intensity_blob, self.max_intensity_blob)
-        # create spline for light emission of blob
-        # x - values
-        self.set_spline_by_peak_intensity(highest_intensity_frame, peak_intensity_blob)
+        self.peak_intensity_value = random.uniform(self.min_intensity_blob, self.max_intensity_blob)
 
         # For sequencing
         return self
+
+    def set_highest_intensity_frame(self, frame):
+        self.highest_intensity_frame = frame
+
+    def set_peak_intensity_value(self, intensity):
+        self.peak_intensity_value = intensity
 
     def get_blob(self):
         return self.blob
@@ -386,7 +375,10 @@ class Blob:
         :return: None, sets intensity of blob
         """
         self.light_emit_mesh_blob = self.blob.active_material.node_tree.nodes["Emission"].inputs[1]
-        intensity = interpolate.splev(frame, self.spline)
+        if frame < self.highest_intensity_frame:
+            intensity = self.growth_func(frame)
+        else:
+            intensity = self.decay_func(frame)
         self.light_emit_mesh_blob.default_value = intensity
         return intensity
 
