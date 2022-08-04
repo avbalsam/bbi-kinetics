@@ -9,7 +9,7 @@ Click "Add Blob", and the addon will automatically set up the scene with a model
 
 To customize the light intensity pattern of a blob, edit the parameters "Highest Intensity Frame" and "Peak Intensity Value" BEFORE clicking "Add Blob". Once "Add Blob" is clicked, it is impossible to change the intensity patterns of the blob that was added.
 
-[Add Blob]
+![Add Blob Menu](https://github.com/avbalsam/bbi-kinetics/blob/master/images/add_blob.png)
 
 After generating light emitting blobs with satisfactory kinetics, feel free to move or scale those blobs within the mouse just as you would any other blender object. Do not change the material assigned to each of the blobs.
 
