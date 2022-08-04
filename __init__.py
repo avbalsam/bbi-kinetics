@@ -1,3 +1,4 @@
+# noinspection PyInterpreter
 import time
 
 bl_info = {
@@ -55,7 +56,7 @@ def calculate_luciferin_log_growth(x):
 
     :returns: The relative intensity of the luciferin at x
     """
-    return 0.3607 * math.log(x) - 0.1471
+    return 0.3318 * math.log(x) + 0.67
 
 
 def calculate_luciferin_exp_decay(x):
@@ -198,16 +199,10 @@ class BlobGeneratorOperator(bpy.types.Operator):
             blob.set_scale(x, y, z)
 
         if context.scene.randomize_blob_intensity:
-            blob.randomize_spline()
+            blob.randomize_kinetics()
         else:
-            try:
-                blob.set_spline_by_peak_intensity(highest_intensity_frame=context.scene.blob_highest_intensity_frame,
-                                                  peak_intensity_blob=context.scene.blob_highest_intensity)
-            except ValueError:
-                self.report({"ERROR"}, "Invalid spline parameters. Try decreasing highest intensity frame.")
-                blob.delete_model()
-                return {'CANCELLED'}
-        # self.report({"INFO"}, str(blob.spline))
+            blob.set_highest_intensity_frame(context.scene.blob_highest_intensity_frame)
+            blob.set_peak_intensity_value(context.scene.blob_highest_intensity)
         return {'FINISHED'}
 
 
@@ -285,6 +280,12 @@ class Blob:
 
         self.growth_func = growth_func
         self.decay_func = decay_func
+        # To fit data to user submitted parameters, we will stretch the growth function we have developed.
+        self.growth_coeff = 1
+        self.decay_coeff = 1
+
+        # To make sure the blob is at least as bright as the mouse
+        self.parent_mouse_intensity = 0
 
     def get_name(self):
         try:
@@ -299,7 +300,7 @@ class Blob:
 
     def randomize_kinetics(self):
         """
-        Randomize the shape of the spline curve for this Blob.
+        Randomize the kinetics of this Blob.
 
         :return: This Blob object (for sequencing)
         """
@@ -308,6 +309,9 @@ class Blob:
             (self.num_frames * 0.3) + (random.uniform(-1.0, 1.0) * 0.05 * self.num_frames))
 
         self.peak_intensity_value = random.uniform(self.min_intensity_blob, self.max_intensity_blob)
+
+        self.growth_coeff = self.peak_intensity_value / self.growth_func(1)
+        self.decay_coeff = self.peak_intensity_value / self.decay_func(1/(self.num_frames - self.highest_intensity_frame))
 
         # For sequencing
         return self
@@ -369,17 +373,19 @@ class Blob:
 
     def interpolate(self, frame):
         """
-        Sets this blob's intensity based on previously generated spline function
+        Sets this blob's intensity based on growth and decay functions
 
         :param frame: Number frame to interpolate for
         :return: None, sets intensity of blob
         """
         self.light_emit_mesh_blob = self.blob.active_material.node_tree.nodes["Emission"].inputs[1]
         if frame < self.highest_intensity_frame:
-            intensity = self.growth_func(frame)
+            prop = frame+1 / self.highest_intensity_frame
+            intensity = self.growth_func(prop) * self.growth_coeff
         else:
-            intensity = self.decay_func(frame)
-        self.light_emit_mesh_blob.default_value = intensity
+            prop = (frame+1 - self.highest_intensity_frame) / (self.num_frames - self.highest_intensity_frame)
+            intensity = self.decay_func(prop) * self.decay_coeff
+        self.light_emit_mesh_blob.default_value = intensity + self.parent_mouse_intensity
         return intensity
 
 
@@ -508,13 +514,13 @@ class Mouse:
 
     def randomize_blobs(self):
         """
-        Randomizes the position, scale and spline of all blobs connected to this mouse.
+        Randomizes the position, scale and kinetics of all blobs connected to this mouse.
 
         :return: None
         """
         for blob in self.blobs:
             blob.randomize_position(self.x_mouse, self.y_mouse, self.z_mouse) \
-                .randomize_scale()
+                .randomize_scale().randomize_kinetics()
 
     def randomize_scale(self):
         """
@@ -682,7 +688,7 @@ IS_SCENE_CONFIGURED = False
 BLOB_MATERIAL = None
 MOUSE_MATERIAL = None
 
-ADDON = "BBI_Addon"
+ADDON = "BBI_Kinetics"
 BLOB_MODEL = "blob.usdc"
 MOUSE_MODEL = "mouse.usdc"
 BLENDER_FILE = "data_gen_discrete.blend"
@@ -700,8 +706,8 @@ BLENDER_FILE_IMPORT_PATH = str(BLENDER_FILE_IMPORT_PATH)
 
 ADD_BLOB_PROPS = [
     ('label', "Blob Menu:"),
-    ('label', "Path to .usdc file containg light emitting blob. To use default model, leave blank."),
-    ('blob_model_path', bpy.props.StringProperty(name="Blob Path", default=BLOB_PATH)),
+    # ('label', "Path to .usdc file containg light emitting blob. To use default model, leave blank."),
+    # ('blob_model_path', bpy.props.StringProperty(name="Blob Path", default=BLOB_PATH)),
     ('randomize_blob_intensity', bpy.props.BoolProperty(name='Randomize Blob Intensity?', default=True)),
     ('blob_highest_intensity_frame', bpy.props.IntProperty(name='Peak Intensity Frame', default=30)),
     ('blob_highest_intensity', bpy.props.FloatProperty(name='Peak Intensity Val', default=0.3)),
@@ -730,11 +736,11 @@ RENDER_SCENE_PROPS = [
     ('label', ""),
     ('label', "Render Scene Menu:"),
     ('num_frames', bpy.props.IntProperty(name='Num Frames', default=100)),
-    ('num_samples', bpy.props.IntProperty(name='Num Samples', default=10)),
+    ('num_samples', bpy.props.IntProperty(name='Num Samples', default=1)),
     ('randomize_blobs', bpy.props.BoolProperty(name='Randomize Blobs?')),
     ('output_path', bpy.props.StringProperty(name='Output Path',
                                              default="/Users/avbalsam/Desktop/blender_animations"
-                                                     "/training_data_multiblob")),
+                                                     "/blender_addon_new_kinetics")),
 ]
 
 PROPS = ADD_BLOB_PROPS + ADD_MOUSE_PROPS + RENDER_SCENE_PROPS
@@ -758,15 +764,11 @@ def unregister():
         bpy.utils.unregister_class(klass)
 
 
-if __name__ == "__main__":
-    register()
-
-
 """
 Mouse light emission emission setting:
 material.node_tree.nodes["Principled BDSF"].inputs[19].default_value = [1.000000, 1.000000, 1.000000, 1.000000]
 material.node_tree.nodes["Principled BDSF"].inputs[20].default_value = 0.05
-
-
-
 """
+
+if __name__ == "__main__":
+    register()
