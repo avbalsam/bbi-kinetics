@@ -1,4 +1,4 @@
-# bbi-kinetics
+# BBI-Kinetics
 This Blender addon is a quick and easy way to generate large quanities of simulated Bioluminescence Imaging data. To install, download this repository as a zip file. Next, simply add the zip file as an add-on to any Blender file of your choice. For more information on installing Blender add-ons, see https://docs.blender.org/manual/en/latest/editors/preferences/addons.html#installing-add-ons
 
 After installing and activating the add-on, navigate to the "Misc" tab in the Blender 3D viewport. You should see the following UI:
