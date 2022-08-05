@@ -1,6 +1,8 @@
 # noinspection PyInterpreter
 import time
 
+from scipy.stats import skewnorm
+
 bl_info = {
     # required
     'name': 'Blender Bioluminescence Imaging',
@@ -46,41 +48,10 @@ from pathlib import Path
 import random
 
 
-def calculate_luciferin_func(x):
-    """
-    Approximates light emitted by luciferin-luciferase reaction as a fourth-order polynomial. Maximum ~0.25
-
-    :param x: A value between 0 and 1 representing the proportion of time elapsed between the start and end of luciferin
-    kinetics
-
-    :returns: The relative intensity of the luciferin at x
-    """
-    return -7.3377 * (x ** 4) + 20.926 * (x ** 3) - 20.226 * (x ** 2) + 6.97 * x - 0.3261
-
-
-def calculate_max(func, res=50):
-    """
-    Calculates the maximum value of a function with domain (0,1)
-
-    :param func: Function with domain (0,1) to calculate maximum for
-    :param res: Number of times to call the function (increasing this will provide a more exact maximum)
-
-    :returns: A tuple representing maximum x and f(x)
-    """
-    domain = list()
-    r = range(1,res)
-    for i in r:
-        domain.append(i/res)
-
-    max_val = func(domain[0])
-    max_domain = domain[0]
-    for d in domain:
-        result = func(d)
-        if result > max_val:
-            max_val = result
-            max_domain = d
-
-    return max_domain, max_val
+def skew_norm(frame, num_frames, skewness=4, shift=0.5, scale=1, decay_time=2.5, max_intensity_factor=2):
+    poly = skewnorm(skewness, shift, scale)
+    x = frame / num_frames * decay_time * scale
+    return poly.pdf(x) * max_intensity_factor
 
 
 def set_up_scene():
@@ -210,27 +181,26 @@ class BlobGeneratorOperator(bpy.types.Operator):
 
             blob.set_scale(x, y, z)
 
+        """
         if context.scene.randomize_blob_intensity:
             blob.randomize_kinetics()
         else:
             blob.set_highest_intensity_frame(context.scene.blob_highest_intensity_frame)
             blob.set_peak_intensity_value(context.scene.blob_highest_intensity)
+        """
 
-        poly = [context.scene.power_0, context.scene.power_1, context.scene.power_2, context.scene.power_3, context.scene.power_4]
+        skewness = context.scene.skewness # 4
+        shift = context.scene.shift # 0.5
+        scale = context.scene.scale # 1
+        decay_time = context.scene.decay_time
+        max_intensity_factor = context.scene.max_intensity_factor
 
-        empty_num = 0
-        for term in range(len(poly)):
-            if poly[term] == '':
-                poly[term] = 0.0
-                empty_num += 1
-            else:
-                try:
-                    poly[term] = float(poly[term])
-                except Exception as e:
-                    self.report({"ERROR", f"Could not convert terms into equation: {e}"})
-                    blob.delete_model()
-        if empty_num < len(poly):
-            blob.set_kinetic_function(poly)
+        if skewness or shift or scale or decay_time or max_intensity_factor != 0:
+            try:
+                blob.set_kinetic_func_params((skewness,shift,scale,decay_time,max_intensity_factor))
+            except Exception as e:
+                self.report({"ERROR", f"Could not convert terms into equation: {e}"})
+                blob.delete_model()
 
         return {'FINISHED'}
 
@@ -260,6 +230,8 @@ class RenderSceneOperator(bpy.types.Operator):
 
 class Blob:
     def __init__(self,
+                 kinetic_func=skew_norm,
+                 kinetic_func_params=(4, 0.5, 1, 2.5, 2),
                  blob=None,
                  num_frames=100,
 
@@ -270,8 +242,6 @@ class Blob:
                  max_shift_blob_y=5.0,
                  min_intensity_blob=0.2,
                  max_intensity_blob=0.4,
-
-                 kinetic_func=calculate_luciferin_func
                  ):
         """
         :param blob: Blender object representing a light-emitting Blob
@@ -307,10 +277,7 @@ class Blob:
         self.peak_intensity_value = None
 
         self.kinetic_func = kinetic_func
-        # To fit data to user submitted parameters, the function will be stretched.
-        self.stretch_y = 1
-        self.shift = 0
-        self.stretch_x = 1
+        self.kinetic_func_params = kinetic_func_params
 
         # To make sure the blob is at least as bright as the mouse
         # TODO Implement this
@@ -333,6 +300,7 @@ class Blob:
 
         :return: This Blob object (for sequencing)
         """
+        # TODO: Implement this method for skew kinetics
         # frame with highest light intensity blob -> randomized at around 0.3 * num_frames +/- 0.05 * num_frames
         self.highest_intensity_frame = int(
             (self.num_frames * 0.3) + (random.uniform(-1.0, 1.0) * 0.05 * self.num_frames))
@@ -343,23 +311,18 @@ class Blob:
         # For sequencing
         return self
 
-    def set_kinetic_function(self, coeff_list):
-        def k(x):
-            return sum([coeff_list[i] * (x ** i) for i in range(len(coeff_list))])
+    def set_kinetic_function(self, kinetic_func):
+        self.kinetic_func = kinetic_func
 
-        self.kinetic_func = k
-
-        self.fit_kinetics()
+    def set_kinetic_func_params(self, params):
+        self.kinetic_func_params = params
+        self.kinetic_func(0, self.num_frames, *params)
 
     def set_highest_intensity_frame(self, frame):
         self.highest_intensity_frame = frame
-        if self.peak_intensity_value is not None:
-            self.fit_kinetics()
 
     def set_peak_intensity_value(self, intensity):
         self.peak_intensity_value = intensity
-        if self.highest_intensity_frame is not None:
-            self.fit_kinetics()
 
     def get_blob(self):
         return self.blob
@@ -414,6 +377,7 @@ class Blob:
         """
         Sets coefficient and shift of kinetic function to match user submitted parameters
         """
+        # TODO: Implement this method with skew kinetics
         max_d, max_r = calculate_max(self.kinetic_func)
         self.stretch_y = self.peak_intensity_value / max_r
         self.shift = (self.highest_intensity_frame / self.num_frames) - max_d
@@ -426,7 +390,7 @@ class Blob:
         :return: None, sets intensity of blob
         """
         self.light_emit_mesh_blob = self.blob.active_material.node_tree.nodes["Emission"].inputs[1]
-
+        """
         x = frame/self.num_frames + self.shift
         if x < 0 or self.kinetic_func(x) < 0:
             intensity = self.parent_mouse_intensity
@@ -434,8 +398,10 @@ class Blob:
             intensity = self.kinetic_func(x) * self.stretch_y + self.parent_mouse_intensity
 
         self.light_emit_mesh_blob.default_value = intensity
-
-        return intensity
+        """
+        intensity = self.kinetic_func(frame, self.num_frames, *self.kinetic_func_params)
+        self.light_emit_mesh_blob.default_value = intensity
+        return skew_norm(frame, self.num_frames)
 
 
 class Mouse:
@@ -500,6 +466,7 @@ class Mouse:
         self.mouse.select_set(False)
 
     def add_blob(self,
+                 kinetic_func=skew_norm,
                  original_scaling_blob=4.20,
                  min_scaling_blob=0.7,
                  max_scaling_blob=1.1,
@@ -531,7 +498,8 @@ class Mouse:
         new_blob.select_set(False)
 
         blob_obj = Blob(
-            new_blob,
+            kinetic_func=kinetic_func,
+            blob=new_blob,
             min_intensity_blob=min_intensity_blob,
             max_intensity_blob=max_intensity_blob,
             original_scaling_blob=original_scaling_blob,
@@ -711,7 +679,7 @@ class DataGen:
                 for blob in self.mouse.get_blobs():
                     panel.report({"INFO"}, f"Blob Intensity: {blob.interpolate(frame)}")
 
-                panel.report({"INFO"}, f"Mouse Intensity: {self.mouse.interpolate(frame)}")
+                # panel.report({"INFO"}, f"Mouse Intensity: {self.mouse.interpolate(frame)}")
 
                 # save frame to file
                 bpy.ops.render.render(write_still=True, use_viewport=True)
@@ -757,13 +725,13 @@ ADD_BLOB_PROPS = [
     # ('label', "Path to .usdc file containg light emitting blob. To use default model, leave blank."),
     # ('blob_model_path', bpy.props.StringProperty(name="Blob Path", default=BLOB_PATH)),
     ('label', "Add Blob: "),
-    ('label', "Set blob kinetic function:"),
-    ('power_4', bpy.props.StringProperty(name="(x^4) * ", default='')),
-    ('power_3', bpy.props.StringProperty(name="+ (x^3) * ", default='')),
-    ('power_2', bpy.props.StringProperty(name="+ (x^2) * ", default='')),
-    ('power_1', bpy.props.StringProperty(name="+ (x^1) * ", default='')),
-    ('power_0', bpy.props.StringProperty(name="+ ", default='')),
-    ('label', "To use default kinetics, leave these fields blank"),
+    ('label', "Set blob kinetics:"),
+    ('skewness', bpy.props.IntProperty(name="Skewness", default=0)),
+    ('scale', bpy.props.IntProperty(name="Scale", default=0)),
+    ('shift', bpy.props.IntProperty(name="Shift", default=0)),
+    ('decay_time', bpy.props.IntProperty(name="Decay time", default=0)),
+    ('max_intensity_factor', bpy.props.IntProperty(name="Max Intensity Factor", default=0)),
+    ('label', "To use default kinetics, set all of these fields to zero"),
     ('label', ''),
     ('randomize_blob_intensity', bpy.props.BoolProperty(name='Randomize Blob Intensity?', default=True)),
     ('blob_highest_intensity_frame', bpy.props.IntProperty(name='Peak Intensity Frame', default=30)),
