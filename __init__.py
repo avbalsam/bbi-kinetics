@@ -1,6 +1,7 @@
 # noinspection PyInterpreter
 import time
 
+import numpy as np
 from scipy.stats import skewnorm
 
 bl_info = {
@@ -40,6 +41,7 @@ Requirements: The python library scipy has to be installed. As blender uses its
 """
 import textwrap
 import logging
+import math
 
 import bpy
 from bpy.utils import resource_path
@@ -52,6 +54,18 @@ def skew_norm(frame, num_frames, skewness=4, shift=0.5, scale=1, decay_time=2.5,
     poly = skewnorm(skewness, shift, scale)
     x = frame / num_frames * decay_time * scale
     return poly.pdf(x) * max_intensity_factor
+
+
+def pharma_func(frame, num_frames, ka=0.1, ke=0.03):
+    """
+    The magic formula of pharmacokinetics in case of oral administration. Uses framedata, absorption rate and
+    elimination rate to to find relative intensity of pharma function at selected frame.
+    """
+    x = frame / num_frames * 100
+    # The magic formula of pharmacokinetics in case of oral administration
+    y = math.exp(x * (-ke)) - math.exp(x * (-ka))
+
+    return y
 
 
 def set_up_scene():
@@ -127,7 +141,7 @@ class BlobGeneratorPanel(bpy.types.Panel):
         col.operator('opr.object_add_blob_operator', text='Add Blob')
 
         # process_props(context, ADD_MOUSE_PROPS, col)
-        col.operator('opr.object_add_mouse_operator', text='Add Mouse')
+        # col.operator('opr.object_add_mouse_operator', text='Add Mouse')
 
         col.label(text="")
 
@@ -189,15 +203,19 @@ class BlobGeneratorOperator(bpy.types.Operator):
             blob.set_peak_intensity_value(context.scene.blob_highest_intensity)
         """
 
+        """
         skewness = context.scene.skewness # 4
         shift = context.scene.shift # 0.5
         scale = context.scene.scale # 1
         decay_time = context.scene.decay_time
         max_intensity_factor = context.scene.max_intensity_factor
+        """
+        absorption_rate = context.scene.absorption_rate
+        elimination_rate = context.scene.elimination_rate
 
-        if skewness or shift or scale or decay_time or max_intensity_factor != 0:
+        if absorption_rate or elimination_rate != 0:
             try:
-                blob.set_kinetic_func_params((skewness,shift,scale,decay_time,max_intensity_factor))
+                blob.set_kinetic_func_params((absorption_rate, elimination_rate))
             except Exception as e:
                 self.report({"ERROR", f"Could not convert terms into equation: {e}"})
                 blob.delete_model()
@@ -230,8 +248,8 @@ class RenderSceneOperator(bpy.types.Operator):
 
 class Blob:
     def __init__(self,
-                 kinetic_func=skew_norm,
-                 kinetic_func_params=(4, 0.5, 1, 2.5, 2),
+                 kinetic_func=pharma_func,
+                 kinetic_func_params=(0.1, 0.03),
                  blob=None,
                  num_frames=100,
 
@@ -399,9 +417,10 @@ class Blob:
 
         self.light_emit_mesh_blob.default_value = intensity
         """
-        intensity = self.kinetic_func(frame, self.num_frames, *self.kinetic_func_params)
+        intensity = pharma_func(frame, self.num_frames, *self.kinetic_func_params)
+        # intensity = self.kinetic_func(frame, self.num_frames, *self.kinetic_func_params)
         self.light_emit_mesh_blob.default_value = intensity
-        return skew_norm(frame, self.num_frames)
+        return intensity
 
 
 class Mouse:
@@ -466,7 +485,7 @@ class Mouse:
         self.mouse.select_set(False)
 
     def add_blob(self,
-                 kinetic_func=skew_norm,
+                 kinetic_func=pharma_func,
                  original_scaling_blob=4.20,
                  min_scaling_blob=0.7,
                  max_scaling_blob=1.1,
@@ -677,7 +696,7 @@ class DataGen:
                 bpy.context.scene.render.filepath = f"{self.output_path}/{str(sample)}/frame{str(frame)}"
 
                 for blob in self.mouse.get_blobs():
-                    panel.report({"INFO"}, f"Blob Intensity: {blob.interpolate(frame)}")
+                    panel.report({"INFO"}, f"Frame: {frame}, Blob Intensity: {blob.interpolate(frame)}")
 
                 # panel.report({"INFO"}, f"Mouse Intensity: {self.mouse.interpolate(frame)}")
 
@@ -726,11 +745,13 @@ ADD_BLOB_PROPS = [
     # ('blob_model_path', bpy.props.StringProperty(name="Blob Path", default=BLOB_PATH)),
     ('label', "Add Blob: "),
     ('label', "Set blob kinetics:"),
-    ('skewness', bpy.props.IntProperty(name="Skewness", default=0)),
-    ('scale', bpy.props.IntProperty(name="Scale", default=0)),
-    ('shift', bpy.props.IntProperty(name="Shift", default=0)),
-    ('decay_time', bpy.props.IntProperty(name="Decay time", default=0)),
-    ('max_intensity_factor', bpy.props.IntProperty(name="Max Intensity Factor", default=0)),
+    # ('skewness', bpy.props.IntProperty(name="Skewness", default=0)),
+    # ('scale', bpy.props.IntProperty(name="Scale", default=0)),
+    # ('shift', bpy.props.IntProperty(name="Shift", default=0)),
+    # ('decay_time', bpy.props.IntProperty(name="Decay time", default=0)),
+    # ('max_intensity_factor', bpy.props.IntProperty(name="Max Intensity Factor", default=0)),
+    ('absorption_rate', bpy.props.FloatProperty(name="Absorption Rate", default=0)),
+    ('elimination_rate', bpy.props.FloatProperty(name="Elimination Rate", default=0)),
     ('label', "To use default kinetics, set all of these fields to zero"),
     ('label', ''),
     ('randomize_blob_intensity', bpy.props.BoolProperty(name='Randomize Blob Intensity?', default=True)),
