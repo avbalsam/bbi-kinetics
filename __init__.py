@@ -13,12 +13,14 @@ bl_info = {
     'version': (1, 0, 0),
     'author': 'Avi Balsam',
     'description': 'Blender addon for practical synthetic data generation',
+    'link': 'https://github.com/avbalsam/bbi-kinetics',
 }
 
 """
 File: __init__.py
 
 Author 1: A. Balsam
+Author 2: V. Kalchenko
 Date: Summer 2022
 Project: ISSI Weizmann Institute 2022
 
