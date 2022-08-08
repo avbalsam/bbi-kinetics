@@ -247,7 +247,7 @@ class BlobGeneratorOperator(bpy.types.Operator):
             blob.set_scale(x, y, z)
 
         if context.scene.randomize_blob_intensity:
-            blob.randomize_kinetics()
+            blob.randomize_intensity()
         else:
             blob.set_peak_intensity_value(context.scene.blob_highest_intensity)
             blob.fit_kinetics()
@@ -326,6 +326,7 @@ class Blob:
         global BLOB_MATERIAL
 
         self.blob = blob
+        self.scale(1, 1, 1)
 
         BLOB_MATERIAL = bpy.data.materials["blob"]
         self.blob.active_material = BLOB_MATERIAL.copy()
@@ -377,17 +378,27 @@ class Blob:
         self.blob.select_set(True)
         bpy.ops.object.delete()
 
-    def randomize_kinetics(self):
+    def randomize_intensity(self):
         """
         Randomly shifts and scales the kinetic function for this blob.
 
         Returns:
             This Blob object (for sequencing)
         """
-        self.peak_intensity_value = random.uniform(self.min_intensity_blob, self.max_intensity_blob)
+        self.peak_intensity_value = random.uniform(self.peak_intensity_value * 0.90, self.peak_intensity_value * 1.10)
 
         self.fit_kinetics()
         # For sequencing
+        return self
+
+    def randomize_kinetic_func_params(self):
+        """
+        Randomizes each value in self.kinetic_func_params by a maximum of 10% in either direction (experimental)
+
+        Returns:
+            None
+        """
+        self.kinetic_func_params = (random.uniform(param * 0.9, param * 1.10) for param in self.kinetic_func_params)
         return self
 
     def set_kinetic_function(self, kinetic_func):
@@ -454,26 +465,21 @@ class Blob:
 
         return self
 
-    def set_scale(self, x, y, z):
+    def scale(self, x, y, z):
         scale_object(self.blob, x, y, z)
 
     def randomize_scale(self):
         """
-        Randomize scale of blob.
+        Scale blob by a maximum of 10% in either direction
 
         Returns:
             This Blob object (for sequencing)
         """
-        # Set position and scale of blob
-        self.blob.scale[0] = self.original_scaling_blob
-        self.blob.scale[1] = self.original_scaling_blob
-        self.blob.scale[2] = self.original_scaling_blob
+        scaler_x_blob = random.uniform(self.blob.scale[0] * 0.90, self.blob.scale[0] * 1.10)
+        scaler_y_blob = random.uniform(self.blob.scale[1] * 0.90, self.blob.scale[1] * 1.10)
+        scaler_z_blob = random.uniform(self.blob.scale[2] * 0.90, self.blob.scale[2] * 1.10)
 
-        scaler_x_blob = random.uniform(self.min_scaling_blob, self.max_scaling_blob)
-        scaler_y_blob = random.uniform(self.min_scaling_blob, self.max_scaling_blob)
-        scaler_z_blob = random.uniform(self.min_scaling_blob, self.max_scaling_blob)
-
-        self.set_scale(scaler_x_blob, scaler_y_blob, scaler_z_blob)
+        self.scale(scaler_x_blob, scaler_y_blob, scaler_z_blob)
 
         return self
 
@@ -636,7 +642,7 @@ class Mouse:
         """
         for blob in self.blobs:
             blob.randomize_position(self.x_mouse, self.y_mouse, self.z_mouse) \
-                .randomize_scale().randomize_kinetics()
+                .randomize_scale().randomize_intensity()
 
     def randomize_scale(self):
         """
