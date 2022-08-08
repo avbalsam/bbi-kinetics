@@ -19,25 +19,14 @@ bl_info = {
 File: __init__.py
 
 Author 1: A. Balsam
-Author 2: J. Kuehne
 Date: Summer 2022
 Project: ISSI Weizmann Institute 2022
-Label: Utility
 
 Summary:
     This blender addon is an effective tool for synthetic BLI data generation.
     It creates any number of light emitting blob with custom kinetics, and
     sets the light intensity of the blobs at each frame based on custom user-submitted
-    parameters. Additionally, the script creates a mouse which 
-
-Requirements: The python library scipy has to be installed. As blender uses its
-    own and not the system python installation, the package has to be installed
-    specifically for this installation. If this causes difficulties, this can
-    be achieved by the following console commands:
-        (there is somewhere in the blender installation folder the python file,
-        the commands have to be executed relative to that file)
-        PATH_TO_BLENDER_INSTALLATION/.../python3.x -m ensurepip --upgrade
-        PATH_TO_BLENDER_INSTALLATION/.../python3.x -m pip install scipy
+    parameters.
 """
 import textwrap
 import logging
@@ -54,6 +43,15 @@ def pharma_func(frame, num_frames, ka=0.1, ke=0.03):
     """
     The magic formula of pharmacokinetics in case of oral administration. Uses framedata, absorption rate and
     elimination rate to to find relative intensity of pharma function at selected frame.
+
+    Args:
+        frame: Current frame
+        num_frames: Total number of frames
+        ka: Absorption rate
+        ke: Elimination rate
+
+    Returns:
+        Relative intensity value for selected frame
     """
     x = frame / num_frames * 100
     # The magic formula of pharmacokinetics in case of oral administration
@@ -63,6 +61,13 @@ def pharma_func(frame, num_frames, ka=0.1, ke=0.03):
 
 
 def set_up_scene():
+    """
+    Sets up any blender file so that it can be used by the rest of the program. Imports blob and mouse objects
+    from BLENDER_FILE_IMPORT_PATH.
+
+    Returns:
+        None
+    """
     global BLENDER_FILE_IMPORT_PATH
 
     bpy.ops.object.select_all(action='SELECT')
@@ -91,7 +96,18 @@ def set_up_scene():
     # bpy.ops.wm.append(directory="/Users/avbalsam/Downloads/data_gen_discrete.blend/Light/", filename="Light.001")
 
 
-def _label_multiline(context, text, parent):
+def _label_multiline(context, text: str, parent) -> None:
+    """
+    Adds a multiline label to parent (an instance of a subclass of bpy.types.Panel)
+
+    Args:
+        context: The current scene context
+        text (str): Text to put in label
+        parent: Instance of a subclass of bpy.types.Panel. This is where the label will be displayed
+
+    Returns:
+        None
+    """
     chars = int(context.region.width / 15)  # 7 pix on 1 character
     wrapper = textwrap.TextWrapper(width=chars)
     text_lines = wrapper.wrap(text=text)
@@ -102,8 +118,18 @@ def _label_multiline(context, text, parent):
             parent.label(text=text_line)
 
 
-def process_props(context, props, parent):
-    """Updates Blender UI based on props passed."""
+def process_props(context, props: list, parent) -> None:
+    """
+    Updates Blender UI based on props passed.
+
+    Args:
+        context: Current scene context
+        props (list): List of tuples to add to "parent" as props
+        parent: Instance of a subclass of bpy.types.Panel
+
+    Returns:
+        None
+    """
     for (prop_name, prop) in props:
         if prop_name == 'label':
             _label_multiline(
@@ -116,7 +142,19 @@ def process_props(context, props, parent):
             row.prop(context.scene, prop_name)
 
 
-def scale_object(obj, scaler_x, scaler_y, scaler_z):
+def scale_object(obj, scaler_x: float, scaler_y: float, scaler_z: float):
+    """
+    Scales "obj" (a blender object) using the bpy python module
+
+    Args:
+        obj: Blender object to scale
+        scaler_x (float): Scale factor in the X direction
+        scaler_y (float): Scale factor in the Y direction
+        scaler_z (float): Scale factor in the Z direction
+
+    Returns:
+        None
+    """
     obj.select_set(True)
     bpy.ops.transform.resize(value=(scaler_x, scaler_y, scaler_z))
     obj.select_set(False)
@@ -129,13 +167,19 @@ class BlobGeneratorPanel(bpy.types.Panel):
     bl_region_type = 'UI'
 
     def draw(self, context):
+        """
+        Creates a Blender UI panel with various options.
+
+        Args:
+            context: Current scene context
+
+        Returns:
+            None
+        """
         col = self.layout.column()
 
         process_props(context, ADD_BLOB_PROPS, col)
         col.operator('opr.object_add_blob_operator', text='Add Blob')
-
-        # process_props(context, ADD_MOUSE_PROPS, col)
-        # col.operator('opr.object_add_mouse_operator', text='Add Mouse')
 
         col.label(text="")
 
@@ -148,6 +192,16 @@ class BlobGeneratorOperator(bpy.types.Operator):
     bl_label = 'Blob Adder'
 
     def execute(self, context):
+        """
+        Defines a button in the blender UI which, when pressed, adds a blob and a mouse to the scene
+        (unless there is already a mouse, in which case it just adds a blob).
+
+        Args:
+            context: Current scene context
+
+        Returns:
+            None
+        """
         global IS_SCENE_CONFIGURED
         global DATA_GEN
         global BLOB_MATERIAL
@@ -216,6 +270,15 @@ class RenderSceneOperator(bpy.types.Operator):
     bl_label = 'Scene Renderer'
 
     def execute(self, context):
+        """
+        Defines a Blender UI button which, when pressed, renders the scene by interpolating for each frame.
+
+        Args:
+            context: Current scene context
+
+        Returns:
+            None
+        """
         global DATA_GEN
 
         if len(DATA_GEN) == 0:
@@ -247,15 +310,18 @@ class Blob:
                  max_intensity_blob=0.4,
                  ):
         """
-        :param blob: Blender object representing a light-emitting Blob
-        :param num_frames: Number of frames in each render
-        :param original_scaling_blob: Original scale of Blob
-        :param min_scaling_blob: Minimum final scale of Blob
-        :param max_scaling_blob: Maximum final scale of Blob
-        :param max_shift_blob_x: Maximum position change on the x axis (in the positive and negative directions)
-        :param max_shift_blob_y: Maximum position change on the y axis (in the positive and negative directions)
-        :param min_intensity_blob: Minimum peak intensity of Blob
-        :param max_intensity_blob: Maximum peak intensity of Blob
+        Args:
+            kinetic_func: Function to find intensity of blob at a given frame
+            kinetic_func_params: Params to pass to function
+            blob: Blender object representing a light-emitting Blob
+            num_frames: Number of frames in each render
+            original_scaling_blob: Original scale of Blob (deprecated)
+            min_scaling_blob: Minimum scale of Blob
+            max_scaling_blob: Maximum scale of Blob
+            max_shift_blob_x: Maximum position change on the x axis (in the positive and negative directions)
+            max_shift_blob_y: Maximum position change on the y axis (in the positive and negative directions)
+            min_intensity_blob: Minimum peak intensity of Blob
+            max_intensity_blob: Maximum peak intensity of Blob
         """
         global BLOB_MATERIAL
 
@@ -289,6 +355,12 @@ class Blob:
         self.parent_mouse_intensity = 0
 
     def get_name(self):
+        """
+        Returns the name of this blob. Useful for testing.
+
+        Returns:
+            The name of this blob
+        """
         try:
             name = self.blob.name
             return name
@@ -296,6 +368,12 @@ class Blob:
             return False
 
     def delete_model(self):
+        """
+        Deletes this blob's "blob" property.
+
+        Returns:
+            None
+        """
         self.blob.select_set(True)
         bpy.ops.object.delete()
 
@@ -303,7 +381,8 @@ class Blob:
         """
         Randomly shifts and scales the kinetic function for this blob.
 
-        :return: This Blob object (for sequencing)
+        Returns:
+            This Blob object (for sequencing)
         """
         self.peak_intensity_value = random.uniform(self.min_intensity_blob, self.max_intensity_blob)
 
@@ -312,13 +391,40 @@ class Blob:
         return self
 
     def set_kinetic_function(self, kinetic_func):
+        """
+        Sets this blob's kinetic function
+
+        Args:
+            kinetic_func: Function which takes the current frame, the number of frames, and any other parameters
+
+        Returns:
+            None
+        """
         self.kinetic_func = kinetic_func
 
-    def set_kinetic_func_params(self, params):
+    def set_kinetic_func_params(self, params: tuple):
+        """
+        Sets the parameters for the kinetic function and runs the kinetic function to ensure the parameters are valid.
+
+        Args:
+            params (tuple): List of parameters (in order) which should be passed to the kinetic function
+
+        Returns:
+
+        """
         self.kinetic_func_params = params
         self.kinetic_func(0, self.num_frames, *params)
 
     def set_peak_intensity_value(self, intensity):
+        """
+        Sets the peak intensity of this blob. Make sure to call self.fit_kinetics() to update kinetic function.
+
+        Args:
+            intensity: Maximum relative intensity of this blob
+
+        Returns:
+            None
+        """
         self.peak_intensity_value = intensity
 
     def get_blob(self):
@@ -335,10 +441,10 @@ class Blob:
         Randomize the position of this Blob within the mouse. Note: This method depends on mouse position,
         so make sure to set the position of the mouse before calling this method.
 
-        :param x_mouse: X-coordinate of mouse position
-        :param y_mouse: Y-coordinate of mouse position
-        :param z_mouse: Z-coordinate of mouse position
-        :return: This Blob object (for sequencing)
+        Args:
+            x_mouse: X-coordinate of mouse position
+            y_mouse: Y-coordinate of mouse position
+            z_mouse: Z-coordinate of mouse position
         """
         # placement of blob (lighting source) -> randomized -> relative to mouse placement
         x_pos = random.uniform(-1.0, 1.0) * self.max_shift_blob_x + x_mouse
@@ -355,7 +461,8 @@ class Blob:
         """
         Randomize scale of blob.
 
-        :return: This Blob object (for sequencing)
+        Returns:
+            This Blob object (for sequencing)
         """
         # Set position and scale of blob
         self.blob.scale[0] = self.original_scaling_blob
@@ -372,7 +479,8 @@ class Blob:
 
     def fit_kinetics(self):
         """
-        Sets coefficient and shift of kinetic function to match user submitted parameters
+        Sets stretch_y, a coefficient which is applied to self.kinetic_func and allows for custom peak
+        intensity values.
         """
         # TODO: Implement this method with skew kinetics
         max_r = max([self.kinetic_func(frame, self.num_frames, *self.kinetic_func_params) for frame in range(self.num_frames)])
@@ -383,8 +491,10 @@ class Blob:
         """
         Sets this blob's intensity based on growth and decay functions
 
-        :param frame: Number frame to interpolate for
-        :return: None, sets intensity of blob
+        Args:
+            frame (int): Frame to interpolate for
+        Returns:
+            None
         """
         self.light_emit_mesh_blob = self.blob.active_material.node_tree.nodes["Emission"].inputs[1]
         intensity = pharma_func(frame, self.num_frames, *self.kinetic_func_params) * self.stretch_y + self.parent_mouse_intensity
@@ -395,8 +505,6 @@ class Blob:
 
 class Mouse:
     def __init__(self,
-                 mouse,
-                 light_source,
                  num_frames=100,
                  min_init_intensity_mouse=0.05,
                  max_init_intensity_mouse=0.06,
@@ -411,20 +519,19 @@ class Mouse:
                  max_shift_mouse_y=2,
                  ):
         """
-        :param mouse: Blender object representing the mouse
-        :param light_source: Blender object representing light source
-        :param num_frames: Number of frames to render (full kinematics will always be rendered)
-        :param min_init_intensity_mouse: Minimum intensity of initial light emitted from mouse
-        :param max_init_intensity_mouse: Maximum intensity of initial light emitted from mouse
-        :param min_end_intensity_mouse: Minimum intensity of final light emitted from mouse (should be less than initial intensity)
-        :param max_end_intensity_mouse: Maximum intensity of final light emitted from mouse (should be less than initial intensity)
-        :param min_intensity_blob: Minimum intensity of blobs at highest-intensity frame
-        :param max_intensity_blob: Minimum intensity of blobs at highest-intensity frame
-        :param original_scaling_mouse: Original scale of mouse
-        :param min_scaling_mouse: Minimum final scale of mouse
-        :param max_scaling_mouse: Maximum final scale of mouse
-        :param max_shift_mouse_x: Maximum shift in position on the x axis
-        :param max_shift_mouse_y: Maximum shift in position on the y axis
+        Args:
+            num_frames: Number of frames to render (full kinematics will always be rendered)
+            min_init_intensity_mouse: Minimum intensity of initial light emitted from mouse
+            max_init_intensity_mouse: Maximum intensity of initial light emitted from mouse
+            min_end_intensity_mouse: Minimum intensity of final light emitted from mouse (should be less than initial intensity)
+            max_end_intensity_mouse: Maximum intensity of final light emitted from mouse (should be less than initial intensity)
+            min_intensity_blob: Minimum intensity of blobs at highest-intensity frame
+            max_intensity_blob: Minimum intensity of blobs at highest-intensity frame
+            original_scaling_mouse: Original scale of mouse (deprecated)
+            min_scaling_mouse: Minimum final scale of mouse
+            max_scaling_mouse: Maximum final scale of mouse
+            max_shift_mouse_x: Maximum shift in position on the x-axis (minimum is 0)
+            max_shift_mouse_y: Maximum shift in position on the y-axis (minimum is 0)
         """
         global MOUSE_MATERIAL
         global MOUSE_PATH
@@ -456,6 +563,7 @@ class Mouse:
 
     def add_blob(self,
                  kinetic_func=pharma_func,
+                 kinetic_func_params=(0.1, 0.03),
                  original_scaling_blob=4.20,
                  min_scaling_blob=0.7,
                  max_scaling_blob=1.1,
@@ -465,19 +573,18 @@ class Mouse:
                  max_intensity_blob=0.4,
                  ):
         """
-        Add a blob to this mouse.
+        Add a light-emitting blob to this mouse.
 
-        :param blob_model_path: Path to blender model of blob (if left blank, default blob will be used).
-        :param reporter: Blender UI panel for logging
-        :param original_scaling_blob:
-        :param min_scaling_blob:
-        :param max_scaling_blob:
-        :param max_shift_blob_x:
-        :param max_shift_blob_y:
-        :param min_intensity_blob:
-        :param max_intensity_blob:
-
-        :returns: None
+        Args:
+            kinetic_func: Function to find intensity of blob at a given frame
+            kinetic_func_params: Params to pass to function
+            original_scaling_blob: Original scale of Blob (deprecated)
+            min_scaling_blob: Minimum scale of Blob
+            max_scaling_blob: Maximum scale of Blob
+            max_shift_blob_x: Maximum position change on the x axis (in the positive and negative directions)
+            max_shift_blob_y: Maximum position change on the y axis (in the positive and negative directions)
+            min_intensity_blob: Minimum peak intensity of Blob
+            max_intensity_blob: Maximum peak intensity of Blob
         """
         global BLENDER_FILE_IMPORT_PATH
 
@@ -488,6 +595,7 @@ class Mouse:
 
         blob_obj = Blob(
             kinetic_func=kinetic_func,
+            kinetic_func_params=kinetic_func_params,
             blob=new_blob,
             min_intensity_blob=min_intensity_blob,
             max_intensity_blob=max_intensity_blob,
@@ -509,7 +617,8 @@ class Mouse:
         """
         Loops through this mouse's list of blobs and deletes any that are no longer present in the scene.
 
-        :return: None
+        Returns:
+            None
         """
         b = 0
         while b < len(self.blobs):
@@ -522,7 +631,8 @@ class Mouse:
         """
         Randomizes the position, scale and kinetics of all blobs connected to this mouse.
 
-        :return: None
+        Returns:
+            None
         """
         for blob in self.blobs:
             blob.randomize_position(self.x_mouse, self.y_mouse, self.z_mouse) \
@@ -532,7 +642,8 @@ class Mouse:
         """
         Randomizes the scale of this mouse.
 
-        :return: None
+        Returns:
+            None
         """
         # After initializing values, set position and scale of mouse
         self.mouse.scale[0] = self.original_scaling_mouse
@@ -552,7 +663,8 @@ class Mouse:
         """
         Randomizes the position of this mouse.
 
-        :return: None
+        Returns:
+            None
         """
         self.x_mouse = random.uniform(-1.0, 1.0) * self.max_shift_mouse_x
         self.y_mouse = random.uniform(-1.0, 1.0) * self.max_shift_mouse_y
@@ -563,16 +675,25 @@ class Mouse:
         return self
 
     def delete_model(self):
+        """
+        Deletes the Blender model associated with this Mouse object from the scene.
+
+        Returns:
+            None
+        """
         self.mouse.select_set(True)
         bpy.ops.object.delete()
         self.mouse = None
 
     def interpolate(self, frame):
         """
-        Sets intensity of mouse based on exponential decay
+        Sets the intensity of the mouse based on linear decay.
 
-        :param frame: Number frame to set intensity for
-        :return: None, sets intensity of mouse
+        Args:
+            frame: Number frame to set intensity for
+
+        Returns:
+            None
         """
         # illumination mouse -> decrease linearly (approx)
         intensity_delta = self.init_intensity_mouse - self.end_intensity_mouse
@@ -598,9 +719,12 @@ class DataGen:
                  output_path=None,
                  ):
         """
-        :param img_size: Pixel size of images to generate
-        :param num_frames: Number of frames to render in each sample
-        :param num_samples: Number of samples to render
+
+        Args:
+            img_size: Pixel size of images to generate
+            num_frames: Number of frames to render in each sample
+            num_samples: Number of samples to render
+            output_path: Path to output files
         """
         self.img_size = img_size
         self.num_samples = num_samples
@@ -610,7 +734,6 @@ class DataGen:
         self.mouse = None
 
     def set_mouse(self,
-
                   min_init_intensity_mouse=0.05,
                   max_init_intensity_mouse=0.06,
                   min_end_intensity_mouse=0.045,
@@ -621,11 +744,25 @@ class DataGen:
                   max_shift_mouse_x=2,
                   max_shift_mouse_y=2,
                   ):
+        """
+        Checks if a mouse object has been created for this datagen, and adds one if it has not.
+
+        Args:
+            min_init_intensity_mouse: Minimum intensity of initial light emitted from mouse
+            max_init_intensity_mouse: Maximum intensity of initial light emitted from mouse
+            min_end_intensity_mouse: Minimum intensity of final light emitted from mouse (should be less than initial intensity)
+            max_end_intensity_mouse: Maximum intensity of final light emitted from mouse (should be less than initial intensity)
+            original_scaling_mouse: Original scale of mouse (deprecated)
+            min_scaling_mouse: Minimum final scale of mouse
+            max_scaling_mouse: Maximum final scale of mouse
+            max_shift_mouse_x: Maximum shift in position on the x-axis (minimum is 0)
+            max_shift_mouse_y: Maximum shift in position on the y-axis (minimum is 0)
+
+        Returns:
+            None
+        """
         if not self.mouse:
             self.mouse = Mouse(
-                mouse=None,
-                light_source=None,
-
                 min_init_intensity_mouse=min_init_intensity_mouse,
                 max_init_intensity_mouse=max_init_intensity_mouse,
                 min_end_intensity_mouse=min_end_intensity_mouse,
@@ -646,7 +783,17 @@ class DataGen:
     def set_output_path(self, output_path):
         self.output_path = output_path
 
-    def render_data(self, randomize_blobs, panel):
+    def render_data(self, randomize_blobs: bool, panel):
+        """
+        Render the scene while interpolating intensity based on kinetic function. Save render to self.output_path
+
+        Args:
+            randomize_blobs (bool): Whether to randomize the position and kinetics of the blobs after each render
+            panel: A Blender UI object which can be used for reporting erros and debug information.
+
+        Returns:
+            None
+        """
         bpy.data.scenes["Scene"].render.image_settings.file_format = 'TIFF'
         bpy.data.scenes["Scene"].render.use_overwrite = False
         bpy.data.scenes["Scene"].render.image_settings.color_mode = 'RGB'
@@ -659,7 +806,6 @@ class DataGen:
             # Randomize position and scale of mouse and blobs. Make sure to call in this order -- position of blobs
             # is relative to position of mouse.
             self.mouse.randomize_position().randomize_scale()
-
             if randomize_blobs:
                 self.mouse.randomize_blobs()
 
