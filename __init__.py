@@ -50,12 +50,6 @@ from pathlib import Path
 import random
 
 
-def skew_norm(frame, num_frames, skewness=4, shift=0.5, scale=1, decay_time=2.5, max_intensity_factor=2):
-    poly = skewnorm(skewness, shift, scale)
-    x = frame / num_frames * decay_time * scale
-    return poly.pdf(x) * max_intensity_factor
-
-
 def pharma_func(frame, num_frames, ka=0.1, ke=0.03):
     """
     The magic formula of pharmacokinetics in case of oral administration. Uses framedata, absorption rate and
@@ -160,6 +154,9 @@ class BlobGeneratorOperator(bpy.types.Operator):
         global MOUSE_MATERIAL
         global BLENDER_FILE_IMPORT_PATH
 
+        if context.scene.import_path != '':
+            BLENDER_FILE_IMPORT_PATH = context.scene.import_path
+
         if not IS_SCENE_CONFIGURED:
             set_up_scene()
             IS_SCENE_CONFIGURED = True
@@ -195,21 +192,12 @@ class BlobGeneratorOperator(bpy.types.Operator):
 
             blob.set_scale(x, y, z)
 
-        """
         if context.scene.randomize_blob_intensity:
             blob.randomize_kinetics()
         else:
-            blob.set_highest_intensity_frame(context.scene.blob_highest_intensity_frame)
             blob.set_peak_intensity_value(context.scene.blob_highest_intensity)
-        """
+            blob.fit_kinetics()
 
-        """
-        skewness = context.scene.skewness # 4
-        shift = context.scene.shift # 0.5
-        scale = context.scene.scale # 1
-        decay_time = context.scene.decay_time
-        max_intensity_factor = context.scene.max_intensity_factor
-        """
         absorption_rate = context.scene.absorption_rate
         elimination_rate = context.scene.elimination_rate
 
@@ -237,10 +225,7 @@ class RenderSceneOperator(bpy.types.Operator):
         DATA_GEN[0].set_num_samples(context.scene.num_samples)
         DATA_GEN[0].set_output_path(context.scene.output_path)
 
-        if context.scene.randomize_blobs:
-            self.report({"INFO"}, "Randomizing blobs...")
-            DATA_GEN[0].mouse.randomize_blobs()
-        DATA_GEN[0].render_data(self)
+        DATA_GEN[0].render_data(randomize_blobs=context.scene.randomize_blobs, panel=self)
         DATA_GEN.pop(0)
 
         return {'FINISHED'}
@@ -291,11 +276,13 @@ class Blob:
         self.max_intensity_blob = max_intensity_blob
         self.num_frames = num_frames
 
-        self.highest_intensity_frame = None
         self.peak_intensity_value = None
 
         self.kinetic_func = kinetic_func
         self.kinetic_func_params = kinetic_func_params
+
+        self.stretch_y = None
+        self.shift = None
 
         # To make sure the blob is at least as bright as the mouse
         # TODO Implement this
@@ -318,11 +305,6 @@ class Blob:
 
         :return: This Blob object (for sequencing)
         """
-        # TODO: Implement this method for skew kinetics
-        # frame with highest light intensity blob -> randomized at around 0.3 * num_frames +/- 0.05 * num_frames
-        self.highest_intensity_frame = int(
-            (self.num_frames * 0.3) + (random.uniform(-1.0, 1.0) * 0.05 * self.num_frames))
-
         self.peak_intensity_value = random.uniform(self.min_intensity_blob, self.max_intensity_blob)
 
         self.fit_kinetics()
@@ -335,9 +317,6 @@ class Blob:
     def set_kinetic_func_params(self, params):
         self.kinetic_func_params = params
         self.kinetic_func(0, self.num_frames, *params)
-
-    def set_highest_intensity_frame(self, frame):
-        self.highest_intensity_frame = frame
 
     def set_peak_intensity_value(self, intensity):
         self.peak_intensity_value = intensity
@@ -396,9 +375,9 @@ class Blob:
         Sets coefficient and shift of kinetic function to match user submitted parameters
         """
         # TODO: Implement this method with skew kinetics
-        max_d, max_r = calculate_max(self.kinetic_func)
+        max_r = max([self.kinetic_func(frame, self.num_frames, *self.kinetic_func_params) for frame in range(self.num_frames)])
+
         self.stretch_y = self.peak_intensity_value / max_r
-        self.shift = (self.highest_intensity_frame / self.num_frames) - max_d
 
     def interpolate(self, frame):
         """
@@ -408,16 +387,7 @@ class Blob:
         :return: None, sets intensity of blob
         """
         self.light_emit_mesh_blob = self.blob.active_material.node_tree.nodes["Emission"].inputs[1]
-        """
-        x = frame/self.num_frames + self.shift
-        if x < 0 or self.kinetic_func(x) < 0:
-            intensity = self.parent_mouse_intensity
-        else:
-            intensity = self.kinetic_func(x) * self.stretch_y + self.parent_mouse_intensity
-
-        self.light_emit_mesh_blob.default_value = intensity
-        """
-        intensity = pharma_func(frame, self.num_frames, *self.kinetic_func_params)
+        intensity = pharma_func(frame, self.num_frames, *self.kinetic_func_params) * self.stretch_y + self.parent_mouse_intensity
         # intensity = self.kinetic_func(frame, self.num_frames, *self.kinetic_func_params)
         self.light_emit_mesh_blob.default_value = intensity
         return intensity
@@ -428,10 +398,10 @@ class Mouse:
                  mouse,
                  light_source,
                  num_frames=100,
-                 min_init_intensity_mouse=0.025,
-                 max_init_intensity_mouse=0.027,
-                 min_end_intensity_mouse=0.024,
-                 max_end_intensity_mouse=0.0025,
+                 min_init_intensity_mouse=0.05,
+                 max_init_intensity_mouse=0.06,
+                 min_end_intensity_mouse=0.045,
+                 max_end_intensity_mouse=0.05,
                  min_intensity_blob=0.2,
                  max_intensity_blob=0.4,
                  original_scaling_mouse=0.420,
@@ -607,7 +577,6 @@ class Mouse:
         # illumination mouse -> decrease linearly (approx)
         intensity_delta = self.init_intensity_mouse - self.end_intensity_mouse
         intensity = self.init_intensity_mouse - intensity_delta * (frame / self.num_frames)
-        # intensity = 0.030
         self.light_emit_mesh.default_value = intensity
         return intensity
 
@@ -642,10 +611,10 @@ class DataGen:
 
     def set_mouse(self,
 
-                  min_init_intensity_mouse=0.027,
-                  max_init_intensity_mouse=0.036,
-                  min_end_intensity_mouse=0.026,
-                  max_end_intensity_mouse=0.025,
+                  min_init_intensity_mouse=0.05,
+                  max_init_intensity_mouse=0.06,
+                  min_end_intensity_mouse=0.045,
+                  max_end_intensity_mouse=0.05,
                   original_scaling_mouse=0.420,
                   min_scaling_mouse=0.9,
                   max_scaling_mouse=1.1,
@@ -677,7 +646,7 @@ class DataGen:
     def set_output_path(self, output_path):
         self.output_path = output_path
 
-    def render_data(self, panel):
+    def render_data(self, randomize_blobs, panel):
         bpy.data.scenes["Scene"].render.image_settings.file_format = 'TIFF'
         bpy.data.scenes["Scene"].render.use_overwrite = False
         bpy.data.scenes["Scene"].render.image_settings.color_mode = 'RGB'
@@ -690,7 +659,9 @@ class DataGen:
             # Randomize position and scale of mouse and blobs. Make sure to call in this order -- position of blobs
             # is relative to position of mouse.
             self.mouse.randomize_position().randomize_scale()
-            # self.mouse.randomize_blobs()
+
+            if randomize_blobs:
+                self.mouse.randomize_blobs()
 
             for frame in range(self.num_frames):
                 bpy.context.scene.render.filepath = f"{self.output_path}/{str(sample)}/frame{str(frame)}"
@@ -741,41 +712,20 @@ BLENDER_FILE_IMPORT_PATH = USER / "scripts/addons" / ADDON / "models" / BLENDER_
 BLENDER_FILE_IMPORT_PATH = str(BLENDER_FILE_IMPORT_PATH)
 
 ADD_BLOB_PROPS = [
-    # ('label', "Path to .usdc file containg light emitting blob. To use default model, leave blank."),
-    # ('blob_model_path', bpy.props.StringProperty(name="Blob Path", default=BLOB_PATH)),
     ('label', "Add Blob: "),
+    ('import_path', bpy.props.StringProperty(name="Import Path: ", default='')),
+    ('label', "To use default blob and mouse models, leave blank."),
+    ('label', ''),
     ('label', "Set blob kinetics:"),
-    # ('skewness', bpy.props.IntProperty(name="Skewness", default=0)),
-    # ('scale', bpy.props.IntProperty(name="Scale", default=0)),
-    # ('shift', bpy.props.IntProperty(name="Shift", default=0)),
-    # ('decay_time', bpy.props.IntProperty(name="Decay time", default=0)),
-    # ('max_intensity_factor', bpy.props.IntProperty(name="Max Intensity Factor", default=0)),
     ('absorption_rate', bpy.props.FloatProperty(name="Absorption Rate", default=0)),
     ('elimination_rate', bpy.props.FloatProperty(name="Elimination Rate", default=0)),
-    ('label', "To use default kinetics, set all of these fields to zero"),
+    ('label', "To use default kinetics, set all of these fields to zero."),
     ('label', ''),
     ('randomize_blob_intensity', bpy.props.BoolProperty(name='Randomize Blob Intensity?', default=True)),
-    ('blob_highest_intensity_frame', bpy.props.IntProperty(name='Peak Intensity Frame', default=30)),
     ('blob_highest_intensity', bpy.props.FloatProperty(name='Peak Intensity Val', default=0.3)),
     ('randomize_blob_position', bpy.props.BoolProperty(name='Randomize Blob Position?', default=True)),
-    # ('blob_position_x', bpy.props.FloatProperty(name='Blob Pos X', default=0.0)),
-    # ('blob_position_y', bpy.props.FloatProperty(name='Blob Pos Y', default=0.0)),
-    # ('blob_position_z', bpy.props.FloatProperty(name='Blob Pos Z', default=0.0)),
     ('randomize_blob_scale', bpy.props.BoolProperty(name='Randomize Blob Scale?', default=True)),
-    # ('blob_scale_x', bpy.props.FloatProperty(name='Blob Scale X', default=0.0)),
-    # ('blob_scale_y', bpy.props.FloatProperty(name='Blob Scale Y', default=0.0)),
-    # ('blob_scale_z', bpy.props.FloatProperty(name='Blob Scale Z', default=0.0)),
     ('label', ""),
-]
-
-ADD_MOUSE_PROPS = [
-    ('label', ""),
-    ('label', "Mouse Menu:"),
-    ('randomize_mouse_position', bpy.props.BoolProperty(name='Randomize Mouse Position?', default=False)),
-    ('randomize_mouse_scale', bpy.props.BoolProperty(name='Randomize Mouse Scale?', default=False)),
-    ('label', "Path to .usdc file containing mouse (or other object). "
-              "For default mouse model, leave blank."),
-    ('mouse_model_path', bpy.props.StringProperty(name="Mouse Path", default=MOUSE_PATH)),
 ]
 
 RENDER_SCENE_PROPS = [
@@ -789,7 +739,7 @@ RENDER_SCENE_PROPS = [
                                                      "/blender_addon_new_kinetics")),
 ]
 
-PROPS = ADD_BLOB_PROPS + ADD_MOUSE_PROPS + RENDER_SCENE_PROPS
+PROPS = ADD_BLOB_PROPS + RENDER_SCENE_PROPS
 
 
 def register():
@@ -797,8 +747,8 @@ def register():
         if prop_name != 'label':
             setattr(bpy.types.Scene, prop_name, prop_value)
 
-    for klass in CLASSES:
-        bpy.utils.register_class(klass)
+    for _class in CLASSES:
+        bpy.utils.register_class(_class)
 
 
 def unregister():
@@ -806,15 +756,9 @@ def unregister():
         if prop_name != 'label':
             delattr(bpy.types.Scene, prop_name)
 
-    for klass in CLASSES:
-        bpy.utils.unregister_class(klass)
+    for _class in CLASSES:
+        bpy.utils.unregister_class(_class)
 
-
-"""
-Mouse light emission emission setting:
-material.node_tree.nodes["Principled BDSF"].inputs[19].default_value = [1.000000, 1.000000, 1.000000, 1.000000]
-material.node_tree.nodes["Principled BDSF"].inputs[20].default_value = 0.05
-"""
 
 if __name__ == "__main__":
     register()
