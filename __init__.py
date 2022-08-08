@@ -231,26 +231,26 @@ class BlobGeneratorOperator(bpy.types.Operator):
         if context.scene.randomize_blob_position:
             blob.randomize_position(DATA_GEN[0].mouse.get_x(), DATA_GEN[0].mouse.get_y(), DATA_GEN[0].mouse.get_z())
         else:
-            x = 0  # context.scene.blob_position_x
-            y = 0  # context.scene.blob_position_y
-            z = 0  # context.scene.blob_position_z
+            x = 0
+            y = 0
+            z = 0
 
             blob.set_position(x, y, z)
 
+        x = 1
+        y = 1
+        z = 1
+        blob.scale(x, y, z)
+
         if context.scene.randomize_blob_scale:
             blob.randomize_scale()
-        else:
-            x = 1  # context.scene.blob_scale_x
-            y = 1  # context.scene.blob_scale_y
-            z = 1  # context.scene.blob_scale_z
 
-            blob.set_scale(x, y, z)
+        blob.set_peak_intensity_value(context.scene.blob_highest_intensity)
 
         if context.scene.randomize_blob_intensity:
             blob.randomize_intensity()
-        else:
-            blob.set_peak_intensity_value(context.scene.blob_highest_intensity)
-            blob.fit_kinetics()
+
+        blob.fit_kinetics()
 
         absorption_rate = context.scene.absorption_rate
         elimination_rate = context.scene.elimination_rate
@@ -326,7 +326,9 @@ class Blob:
         global BLOB_MATERIAL
 
         self.blob = blob
-        self.scale(1, 1, 1)
+        self.blob.scale[0] = original_scaling_blob
+        self.blob.scale[1] = original_scaling_blob
+        self.blob.scale[2] = original_scaling_blob
 
         BLOB_MATERIAL = bpy.data.materials["blob"]
         self.blob.active_material = BLOB_MATERIAL.copy()
@@ -475,11 +477,9 @@ class Blob:
         Returns:
             This Blob object (for sequencing)
         """
-        scaler_x_blob = random.uniform(self.blob.scale[0] * 0.90, self.blob.scale[0] * 1.10)
-        scaler_y_blob = random.uniform(self.blob.scale[1] * 0.90, self.blob.scale[1] * 1.10)
-        scaler_z_blob = random.uniform(self.blob.scale[2] * 0.90, self.blob.scale[2] * 1.10)
-
-        self.scale(scaler_x_blob, scaler_y_blob, scaler_z_blob)
+        self.blob.scale[0] = random.uniform(self.blob.scale[0] * 0.90, self.blob.scale[0] * 1.10)
+        self.blob.scale[1] = random.uniform(self.blob.scale[1] * 0.90, self.blob.scale[1] * 1.10)
+        self.blob.scale[2] = random.uniform(self.blob.scale[2] * 0.90, self.blob.scale[2] * 1.10)
 
         return self
 
