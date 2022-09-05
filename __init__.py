@@ -1,9 +1,3 @@
-# noinspection PyInterpreter
-import time
-
-import numpy as np
-from scipy.stats import skewnorm
-
 bl_info = {
     # required
     'name': 'Blender Bioluminescence Imaging',
@@ -12,7 +6,7 @@ bl_info = {
     # optional
     'version': (1, 0, 0),
     'author': 'Avi Balsam',
-    'description': 'Blender addon for practical synthetic data generation',
+    'description': 'Blender addon for practical synthetic bioluminescence data generation',
     'link': 'https://github.com/avbalsam/bbi-kinetics',
 }
 
@@ -30,8 +24,8 @@ Summary:
     sets the light intensity of the blobs at each frame based on custom user-submitted
     parameters.
 """
+import time
 import textwrap
-import logging
 import math
 
 import bpy
@@ -79,7 +73,6 @@ def set_up_scene():
     # Set background color to black
     bpy.data.worlds["World"].node_tree.nodes["Background"].inputs[0].default_value = [0.000000, 0.000000, 0.000000,
                                                                                       1.000000]
-    # register()
 
     bpy.ops.wm.append(directory=f"{BLENDER_FILE_IMPORT_PATH}/Material/", filename="blob")
     bpy.ops.wm.append(directory=f"{BLENDER_FILE_IMPORT_PATH}/Material/", filename="mouse")
@@ -95,30 +88,6 @@ def set_up_scene():
     camera.location = [0, 0, 75]
     bpy.context.scene.camera = camera
 
-    # bpy.ops.wm.append(directory="/Users/avbalsam/Downloads/data_gen_discrete.blend/Light/", filename="Light.001")
-
-
-def _label_multiline(context, text: str, parent) -> None:
-    """
-    Adds a multiline label to parent (an instance of a subclass of bpy.types.Panel)
-
-    Args:
-        context: The current scene context
-        text (str): Text to put in label
-        parent: Instance of a subclass of bpy.types.Panel. This is where the label will be displayed
-
-    Returns:
-        None
-    """
-    chars = int(context.region.width / 15)  # 7 pix on 1 character
-    wrapper = textwrap.TextWrapper(width=chars)
-    text_lines = wrapper.wrap(text=text)
-    if len(text_lines) == 0:
-        parent.label(text="")
-    else:
-        for text_line in text_lines:
-            parent.label(text=text_line)
-
 
 def process_props(context, props: list, parent) -> None:
     """
@@ -132,13 +101,17 @@ def process_props(context, props: list, parent) -> None:
     Returns:
         None
     """
-    for (prop_name, prop) in props:
+    for (prop_name, text) in props:
         if prop_name == 'label':
-            _label_multiline(
-                context=context,
-                text=prop,
-                parent=parent
-            )
+            # Create a multiline label with text of prop
+            chars = int(context.region.width / 15)  # 7 pix on 1 character
+            wrapper = textwrap.TextWrapper(width=chars)
+            text_lines = wrapper.wrap(text=text)
+            if len(text_lines) == 0:
+                parent.label(text="")
+            else:
+                for text_line in text_lines:
+                    parent.label(text=text_line)
         else:
             row = parent.row()
             row.prop(context.scene, prop_name)
@@ -355,13 +328,9 @@ class Blob:
         self.stretch_y = None
         self.shift = None
 
-        # To make sure the blob is at least as bright as the mouse
-        # TODO Implement this
-        self.parent_mouse_intensity = 0
-
     def get_name(self):
         """
-        Returns the name of this blob. Useful for testing.
+        Returns the name of this blob.
 
         Returns:
             The name of this blob
@@ -374,7 +343,7 @@ class Blob:
 
     def delete_model(self):
         """
-        Deletes this blob's "blob" property.
+        Deletes the blender model connected to this blob and referenced to by self.blob
 
         Returns:
             None
@@ -392,7 +361,6 @@ class Blob:
         self.peak_intensity_value = random.uniform(self.peak_intensity_value * 0.90, self.peak_intensity_value * 1.10)
 
         self.fit_kinetics()
-        # For sequencing
         return self
 
     def randomize_kinetic_func_params(self):
@@ -425,7 +393,7 @@ class Blob:
             params (tuple): List of parameters (in order) which should be passed to the kinetic function
 
         Returns:
-
+            None
         """
         self.kinetic_func_params = params
         self.kinetic_func(0, self.num_frames, *params)
@@ -490,7 +458,7 @@ class Blob:
         Sets stretch_y, a coefficient which is applied to self.kinetic_func and allows for custom peak
         intensity values.
         """
-        # TODO: Implement this method with skew kinetics
+        # Get the maximum value of this blob's kinetic function
         max_r = max([self.kinetic_func(frame, self.num_frames, *self.kinetic_func_params) for frame in range(self.num_frames)])
 
         self.stretch_y = self.peak_intensity_value / max_r
@@ -505,8 +473,9 @@ class Blob:
             None
         """
         self.light_emit_mesh_blob = self.blob.active_material.node_tree.nodes["Emission"].inputs[1]
-        intensity = pharma_func(frame, self.num_frames, *self.kinetic_func_params) * self.stretch_y + self.parent_mouse_intensity
-        # intensity = self.kinetic_func(frame, self.num_frames, *self.kinetic_func_params)
+
+        # For now, we use pharma_func as the default kinetic function. This can be changed to self.kinetic_func.
+        intensity = pharma_func(frame, self.num_frames, *self.kinetic_func_params) * self.stretch_y
         self.light_emit_mesh_blob.default_value = intensity
         return intensity
 
@@ -563,7 +532,7 @@ class Mouse:
         self.y_mouse = 0
         self.z_mouse = 0
 
-        # TODO Allow the user to input their own file
+        # TODO Allow the user to input their own mouse file
         time.sleep(0.5)
         self.mouse = bpy.data.objects["mouse"]
         self.light_emit_mesh = self.mouse.active_material.node_tree.nodes["Principled BSDF"].inputs[20]
@@ -822,8 +791,6 @@ class DataGen:
 
                 for blob in self.mouse.get_blobs():
                     panel.report({"INFO"}, f"Frame: {frame}, Blob Intensity: {blob.interpolate(frame)}")
-
-                # panel.report({"INFO"}, f"Mouse Intensity: {self.mouse.interpolate(frame)}")
 
                 # save frame to file
                 bpy.ops.render.render(write_still=True, use_viewport=True)
